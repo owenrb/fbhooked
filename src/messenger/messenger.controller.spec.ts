@@ -98,4 +98,17 @@ describe('MessengerController', () => {
       );
     });
   });
+
+  describe('setupGetStartedButton (POST /webhook/get-started)', () => {
+    it('should call messengerService.setGetStartedButton', async () => {
+      messengerService.setGetStartedButton = jest
+        .fn()
+        .mockResolvedValue({ result: 'success' });
+
+      const result = await controller.setupGetStartedButton();
+      expect(result).toEqual({ result: 'success' });
+      expect(messengerService.setGetStartedButton).toHaveBeenCalled();
+    });
+  });
 });
+

@@ -64,16 +64,16 @@ yarn tunnel:login
 #### Step 2: Create a Permanent Tunnel ID
 Create a persistent tunnel (e.g. named `fbhooked-dev` or any custom ID):
 ```bash
-yarn tunnel:create my-permanent-tunnel-id
+yarn tunnel:create micks-signal
 ```
 
 #### Step 3: Host the Permanent Tunnel
 Whenever you start your development server, run:
 ```bash
-yarn tunnel my-permanent-tunnel-id
+yarn tunnel micks-signal
 ```
 
-Your persistent HTTPS URL will be `https://<my-permanent-tunnel-id>-3000.asse.devtunnels.ms` (or `https://<my-permanent-tunnel-id>.asse.devtunnels.ms`). Set `https://<my-permanent-tunnel-id>-3000.asse.devtunnels.ms/webhook` as your static Callback URL in the **Meta Developer Dashboard**.
+Your persistent HTTPS URL will be `https://micks-signal-3000.asse.devtunnels.ms` (or `https://micks-signal.asse.devtunnels.ms`). Set `https://micks-signal-3000.asse.devtunnels.ms/webhook` as your static Callback URL in the **Meta Developer Dashboard**.
 
 ---
 
@@ -132,6 +132,32 @@ curl -X POST "http://localhost:3000/webhook" \
 **Response:** `EVENT_RECEIVED` (HTTP 200)
 
 ---
+
+### 3. Configure "Get Started" Button (`POST /webhook/get-started`)
+
+Meta Messenger supports displaying a **"Get Started"** button in the chat thread when a user opens a conversation with your Facebook Page for the first time. Clicking this button sends a postback event with payload `"START_CONVERSATION"`.
+
+- **Automatic Startup Configuration**: When `MESSENGER_PAGE_ACCESS_TOKEN` is configured in `.env`, `fbhooked` automatically sets the `"Get Started"` button with payload `"START_CONVERSATION"` on application startup (`OnModuleInit`).
+- **Manual Setup Endpoint**: You can also trigger or re-configure the button anytime via API:
+
+```bash
+curl -X POST "http://localhost:3000/webhook/get-started"
+```
+
+- **Direct Meta Graph API Command**:
+
+```bash
+source .env && curl -X POST -H "Content-Type: application/json" -d '{
+  "get_started": {
+    "payload": "START_CONVERSATION"
+  }
+}' "https://graph.facebook.com/v21.0/me/messenger_profile?access_token=$MESSENGER_PAGE_ACCESS_TOKEN"
+```
+
+- **First Chat Session Handling**: When a user clicks **"Get Started"**, Meta sends a webhook postback with `payload: "START_CONVERSATION"`. The server processes this event in `MessengerService` and automatically sends a welcome message to the user.
+
+---
+
 
 ## 🔒 Security Signature Verification (`x-hub-signature-256`)
 

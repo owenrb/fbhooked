@@ -4,7 +4,7 @@
   "description": "",
   "author": "",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -18,9 +18,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "tunnel": "f() { ./bin/devtunnel host ${1:-$TUNNEL_ID} -p 3000 --allow-anonymous; }; f",
-    "tunnel:create": "f() { ./bin/devtunnel create ${1:-$TUNNEL_ID} --allow-anonymous && ./bin/devtunnel port create ${1:-$TUNNEL_ID} -p 3000; }; f",
-    "tunnel:login": "./bin/devtunnel user login"
+    "tunnel": "devtunnel host micks-signal --allow-anonymous",
+    "tunnel:create": "f() { devtunnel create micks-signal --allow-anonymous && devtunnel port create micks-signal -p 3000; }; f",
+    "tunnel:login": "devtunnel user login"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

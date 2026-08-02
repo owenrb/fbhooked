@@ -86,4 +86,14 @@ export class MessengerController {
 
     return 'EVENT_RECEIVED';
   }
+
+  /**
+   * Set the Meta Messenger "Get Started" button profile configuration (POST /webhook/get-started)
+   */
+  @Post('get-started')
+  @HttpCode(HttpStatus.OK)
+  async setupGetStartedButton(): Promise<any> {
+    return this.messengerService.setGetStartedButton();
+  }
 }
+

@@ -22,3 +22,8 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# devtunnel binary & binaries
+bin/
+./bin
+/bin

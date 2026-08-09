@@ -50,9 +50,19 @@ yarn start:dev
 yarn start:prod
 ```
 
+### 3. Run with Docker
+
+```bash
+# Build the Docker image
+docker build -t fbhooked .
+
+# Run the container with environment variables
+docker run -d -p 3000:3000 --env-file .env --name fbhooked fbhooked
+```
+
 ---
 
-### 3. Local Webhook Tunneling (Microsoft Dev Tunnels)
+### 4. Local Webhook Tunneling (Microsoft Dev Tunnels)
 
 Meta Webhooks require a public HTTPS URL. You can configure a **permanent, static Tunnel ID** so your Meta Developer Callback URL never changes:
 

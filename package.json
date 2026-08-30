@@ -1,7 +1,7 @@
 {
   "name": "fbhooked",
-  "version": "0.0.7",
-  "description": "A Facebook Messenger bot powered by Azure OpenAI (gpt-5-mini)",
+  "version": "0.0.6",
+  "description": "A Facebook Messenger bot that uses Gemini AI",
   "author": "Owen Bringino",
   "license": "MIT",
   "scripts": {
@@ -22,11 +22,11 @@
     "tunnel:login": "devtunnel user login"
   },
   "dependencies": {
+    "@google/genai": "^2.19.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
-    "openai": "^7.8.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

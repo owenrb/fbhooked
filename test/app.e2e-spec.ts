@@ -3,7 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
-import { AiService } from './../src/ai/ai.service';
+import { GeminiService } from './../src/gemini/gemini.service';
 
 describe('Meta Messenger Webhook (e2e)', () => {
   let app: INestApplication<App>;
@@ -15,10 +15,10 @@ describe('Meta Messenger Webhook (e2e)', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
-      .overrideProvider(AiService)
+      .overrideProvider(GeminiService)
       .useValue({
         sendMessage: jest.fn().mockResolvedValue({
-          text: 'Hello from mock AI (gpt-5-mini)',
+          text: 'Hello from mock Gemini AI',
           quickReplies: ['Help', 'Menu'],
         }),
         resetChat: jest.fn().mockReturnValue(true),
@@ -29,6 +29,7 @@ describe('Meta Messenger Webhook (e2e)', () => {
     app = moduleFixture.createNestApplication({ rawBody: true });
     await app.init();
   });
+
 
   describe('GET /webhook', () => {
     it('should verify token and return challenge', () => {

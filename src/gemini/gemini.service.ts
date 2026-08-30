@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AzureOpenAI } from 'openai';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import {
+  GoogleGenAI,
+  Chat,
+  Content,
+  GenerateContentConfig,
+} from '@google/genai';
 
 export interface GenericTemplateButton {
   type: 'web_url' | 'postback' | 'phone_number';
@@ -17,14 +21,14 @@ export interface GenericTemplateElement {
   buttons?: GenericTemplateButton[];
 }
 
-export interface AiBotResponse {
+export interface GeminiBotResponse {
   text?: string;
   carousel?: GenericTemplateElement[];
   quickReplies?: string[];
 }
 
 export interface ChatSession {
-  messages: ChatCompletionMessageParam[];
+  chat: Chat;
   lastActive: number;
 }
 
@@ -50,13 +54,13 @@ interface RawCarouselElement {
   buttons?: RawCarouselButton[];
 }
 
-interface RawAiOutput {
+interface RawGeminiOutput {
   text?: string;
   carousel?: RawCarouselElement[];
   quickReplies?: string[];
 }
 
-export const DEFAULT_MESSENGER_SYSTEM_INSTRUCTION = `You are a smart, professional, and friendly AI assistant for a Facebook Messenger page powered by Azure OpenAI (gpt-5-mini).
+export const DEFAULT_MESSENGER_SYSTEM_INSTRUCTION = `You are a smart, professional, and friendly AI assistant for a Facebook Messenger page.
 
 IMPORTANT FORMATTING RULES FOR FACEBOOK MESSENGER:
 1. Facebook Messenger does NOT support markdown headers (###), bold asterisks (**text**), or raw markdown link syntax ([text](url)). Always write human-readable plain text without broken markdown symbols.
@@ -198,9 +202,9 @@ export function sanitizeCarouselElements(
 }
 
 /**
- * Parse raw AI output into structured text, carousel cards, and quick replies
+ * Parse raw Gemini output into structured text, carousel cards, and quick replies
  */
-export function parseAiResponse(rawText: string): AiBotResponse {
+export function parseGeminiResponse(rawText: string): GeminiBotResponse {
   if (!rawText || rawText.trim().length === 0) {
     return {
       text: "I'm sorry, I couldn't generate a response. Please try again.",
@@ -217,9 +221,9 @@ export function parseAiResponse(rawText: string): AiBotResponse {
 
   // Attempt JSON parsing
   try {
-    const parsed = JSON.parse(textToParse) as RawAiOutput;
+    const parsed = JSON.parse(textToParse) as RawGeminiOutput;
     if (parsed && typeof parsed === 'object') {
-      const result: AiBotResponse = {};
+      const result: GeminiBotResponse = {};
 
       if (parsed.text && typeof parsed.text === 'string') {
         result.text = cleanMarkdownForMessenger(parsed.text);
@@ -296,64 +300,51 @@ export function parseAiResponse(rawText: string): AiBotResponse {
 }
 
 @Injectable()
-export class AiService {
-  private readonly logger = new Logger(AiService.name);
-  private readonly client: AzureOpenAI | null = null;
+export class GeminiService {
+  private readonly logger = new Logger(GeminiService.name);
+  private readonly ai: GoogleGenAI | null = null;
   private readonly sessions = new Map<string, ChatSession>();
 
-  private readonly endpoint: string;
-  private readonly deploymentName: string;
-  private readonly apiVersion: string;
+  private readonly modelName: string;
   private readonly systemInstruction: string;
   private readonly sessionTtlMs: number;
 
   constructor(private readonly configService: ConfigService) {
-    this.endpoint =
-      this.configService.get<string>('AZURE_OPENAI_ENDPOINT') ||
-      'https://owen-foundry.openai.azure.com/';
-    const apiKey =
-      this.configService.get<string>('AZURE_OPENAI_API_KEY') ||
-      this.configService.get<string>('OPENAI_API_KEY');
-    this.deploymentName =
-      this.configService.get<string>('AZURE_OPENAI_DEPLOYMENT') ||
-      this.configService.get<string>('AZURE_OPENAI_MODEL') ||
-      'gpt-5-mini';
-    this.apiVersion =
-      this.configService.get<string>('AZURE_OPENAI_API_VERSION') ||
-      '2024-10-21';
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    this.modelName =
+      this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.6-flash';
 
     const customInstruction = this.configService.get<string>(
-      'AZURE_OPENAI_SYSTEM_INSTRUCTION',
+      'GEMINI_SYSTEM_INSTRUCTION',
     );
     this.systemInstruction = customInstruction
       ? `${DEFAULT_MESSENGER_SYSTEM_INSTRUCTION}\n\nAdditional Instructions:\n${customInstruction}`
       : DEFAULT_MESSENGER_SYSTEM_INSTRUCTION;
 
     this.sessionTtlMs =
-      Number(this.configService.get<string>('AZURE_OPENAI_SESSION_TTL_MS')) ||
+      Number(this.configService.get<string>('GEMINI_SESSION_TTL_MS')) ||
       30 * 60 * 1000; // 30 minutes default
 
     if (apiKey) {
-      this.client = new AzureOpenAI({
-        endpoint: this.endpoint,
-        apiKey,
-        deployment: this.deploymentName,
-        apiVersion: this.apiVersion,
-      });
+      this.ai = new GoogleGenAI({ apiKey });
       this.logger.log(
-        `AiService initialized with Azure OpenAI endpoint: "${this.endpoint}", deployment: "${this.deploymentName}", apiVersion: "${this.apiVersion}"`,
+        `GeminiService initialized with model: "${this.modelName}"`,
       );
     } else {
       this.logger.warn(
-        'AZURE_OPENAI_API_KEY is not configured. AI chat will be disabled.',
+        'GEMINI_API_KEY is not configured. Gemini multi-turn chat will be disabled.',
       );
     }
   }
 
   /**
-   * Get an existing multi-turn chat session or create a new session
+   * Get an existing chat session or create a new multi-turn conversation session
    */
-  getOrCreateSession(sessionId: string): ChatSession {
+  getOrCreateChat(sessionId: string): Chat {
+    if (!this.ai) {
+      throw new Error('Gemini API client is not initialized (missing API key)');
+    }
+
     this.cleanExpiredSessions();
 
     const existingSession = this.sessions.get(sessionId);
@@ -364,66 +355,62 @@ export class AiService {
       now - existingSession.lastActive < this.sessionTtlMs
     ) {
       existingSession.lastActive = now;
-      return existingSession;
+      return existingSession.chat;
     }
 
-    const newSession: ChatSession = {
-      messages: [{ role: 'system', content: this.systemInstruction }],
-      lastActive: now,
+    const config: GenerateContentConfig = {
+      systemInstruction: this.systemInstruction,
     };
 
-    this.sessions.set(sessionId, newSession);
-    this.logger.log(
-      `Created new Azure OpenAI chat session for: "${sessionId}"`,
-    );
-    return newSession;
+    const newChat = this.ai.chats.create({
+      model: this.modelName,
+      config,
+    });
+
+    this.sessions.set(sessionId, {
+      chat: newChat,
+      lastActive: now,
+    });
+
+    this.logger.log(`Created new Gemini chat session for: "${sessionId}"`);
+    return newChat;
   }
 
   /**
-   * Send a message to Azure OpenAI in the context of the user's multi-turn conversation
+   * Send a message to Gemini in the context of the user's multi-turn conversation
    * and return a structured response (text, carousel adaptive cards, quick replies).
    */
   async sendMessage(
     sessionId: string,
     message: string,
-  ): Promise<AiBotResponse> {
-    if (!this.client) {
-      this.logger.warn(
-        'Azure OpenAI API is not configured. Cannot process message.',
-      );
+  ): Promise<GeminiBotResponse> {
+    if (!this.ai) {
+      this.logger.warn('Gemini API is not configured. Cannot process message.');
       return {
         text: 'Sorry, AI chat is currently unavailable. Please check the server configuration.',
       };
     }
 
     try {
-      const session = this.getOrCreateSession(sessionId);
-      session.messages.push({ role: 'user', content: message });
-
-      const completion = await this.client.chat.completions.create({
-        model: this.deploymentName,
-        messages: session.messages,
-      });
-
-      const replyText = completion.choices?.[0]?.message?.content;
+      const chat = this.getOrCreateChat(sessionId);
+      const response = await chat.sendMessage({ message });
+      const replyText = response.text;
 
       if (!replyText) {
         this.logger.warn(
-          `Empty text response received from Azure OpenAI for session "${sessionId}"`,
+          `Empty text response received from Gemini for session "${sessionId}"`,
         );
         return {
           text: "I'm sorry, I couldn't generate a response. Please try again.",
         };
       }
 
-      session.messages.push({ role: 'assistant', content: replyText });
-
-      return parseAiResponse(replyText);
+      return parseGeminiResponse(replyText);
     } catch (error: unknown) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `Error sending message to Azure OpenAI for session "${sessionId}": ${errorMessage}`,
+        `Error sending message to Gemini for session "${sessionId}": ${errorMessage}`,
       );
       return {
         text: 'Sorry, I encountered an error processing your request. Please try again later.',
@@ -437,20 +424,20 @@ export class AiService {
   resetChat(sessionId: string): boolean {
     const existed = this.sessions.delete(sessionId);
     if (existed) {
-      this.logger.log(`Reset Azure OpenAI chat session for: "${sessionId}"`);
+      this.logger.log(`Reset Gemini chat session for: "${sessionId}"`);
     }
     return existed;
   }
 
   /**
-   * Retrieve conversation history messages for a given session
+   * Retrieve conversation history for a given session
    */
-  getHistory(sessionId: string): ChatCompletionMessageParam[] {
+  getHistory(sessionId: string): Content[] {
     const session = this.sessions.get(sessionId);
-    if (!session) {
+    if (!session || !session.chat) {
       return [];
     }
-    return session.messages;
+    return session.chat.getHistory();
   }
 
   /**
@@ -468,9 +455,7 @@ export class AiService {
     for (const [sessionId, session] of this.sessions.entries()) {
       if (now - session.lastActive >= this.sessionTtlMs) {
         this.sessions.delete(sessionId);
-        this.logger.log(
-          `Cleaned up expired Azure OpenAI session: "${sessionId}"`,
-        );
+        this.logger.log(`Cleaned up expired Gemini session: "${sessionId}"`);
       }
     }
   }

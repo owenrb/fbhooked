@@ -1,33 +1,31 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import {
-  AiService,
+  GeminiService,
   cleanMarkdownForMessenger,
-  parseAiResponse,
+  parseGeminiResponse,
   sanitizeCarouselElements,
-} from './ai.service';
+} from './gemini.service';
 
-interface MockCompletionParams {
-  model: string;
-  messages: unknown[];
-}
+const mockSendMessage = jest.fn();
+const mockGetHistory = jest.fn();
+const mockChatsCreate = jest.fn().mockImplementation(() => ({
+  sendMessage: mockSendMessage,
+  getHistory: mockGetHistory,
+}));
 
-const mockCreate = jest.fn<Promise<unknown>, [MockCompletionParams]>();
-
-jest.mock('openai', () => {
+jest.mock('@google/genai', () => {
   return {
-    AzureOpenAI: jest.fn().mockImplementation(() => ({
-      chat: {
-        completions: {
-          create: mockCreate,
-        },
+    GoogleGenAI: jest.fn().mockImplementation(() => ({
+      chats: {
+        create: mockChatsCreate,
       },
     })),
   };
 });
 
-describe('AiService', () => {
-  let service: AiService;
+describe('GeminiService', () => {
+  let service: GeminiService;
   let configService: jest.Mocked<Partial<ConfigService>>;
 
   beforeEach(async () => {
@@ -35,42 +33,41 @@ describe('AiService', () => {
 
     configService = {
       get: jest.fn().mockImplementation((key: string) => {
-        if (key === 'AZURE_OPENAI_ENDPOINT')
-          return 'https://owen-foundry.openai.azure.com/';
-        if (key === 'AZURE_OPENAI_API_KEY') return 'test-azure-key';
-        if (key === 'AZURE_OPENAI_DEPLOYMENT') return 'gpt-5-mini';
-        if (key === 'AZURE_OPENAI_API_VERSION') return '2024-10-21';
-        if (key === 'AZURE_OPENAI_SESSION_TTL_MS') return '60000';
+        if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
+        if (key === 'GEMINI_MODEL') return 'gemini-3.6-flash';
+        if (key === 'GEMINI_SYSTEM_INSTRUCTION')
+          return 'Custom prompt for tests';
+        if (key === 'GEMINI_SESSION_TTL_MS') return '60000';
         return undefined;
       }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        AiService,
+        GeminiService,
         { provide: ConfigService, useValue: configService },
       ],
     }).compile();
 
-    service = module.get<AiService>(AiService);
+    service = module.get<GeminiService>(GeminiService);
   });
 
-  it('should be defined and initialized with AzureOpenAI', () => {
+  it('should be defined and initialized with GoogleGenAI', () => {
     expect(service).toBeDefined();
   });
 
   describe('sendMessage', () => {
-    it('should send user message, append to conversation history, and parse JSON carousel', async () => {
-      const azureJson = JSON.stringify({
-        text: 'Here are available plumbers in Pasig:',
+    it('should parse structured JSON carousel response from Gemini', async () => {
+      const geminiJson = JSON.stringify({
+        text: 'Here are available plumbers:',
         carousel: [
           {
-            title: 'Pasig Plumbing Pro',
-            subtitle: 'Emergency repairs in Pasig',
+            title: 'Plumber A',
+            subtitle: 'Emergency leak repair',
             buttons: [
               {
                 type: 'phone_number',
-                title: 'Call Now',
+                title: 'Call',
                 payload: '+639123456789',
               },
             ],
@@ -79,60 +76,34 @@ describe('AiService', () => {
         quickReplies: ['Help', 'Menu'],
       });
 
-      mockCreate.mockResolvedValue({
-        choices: [
-          {
-            message: {
-              content: `\`\`\`json\n${azureJson}\n\`\`\``,
-            },
-          },
-        ],
+      mockSendMessage.mockResolvedValue({
+        text: `\`\`\`json\n${geminiJson}\n\`\`\``,
       });
 
-      const response = await service.sendMessage(
-        'user_123',
-        'Need plumber in Pasig',
-      );
+      const response = await service.sendMessage('user_123', 'Need plumber');
 
-      expect(response.text).toBe('Here are available plumbers in Pasig:');
+      expect(response.text).toBe('Here are available plumbers:');
       expect(response.carousel).toHaveLength(1);
-      expect(response.carousel?.[0].title).toBe('Pasig Plumbing Pro');
+      expect(response.carousel?.[0].title).toBe('Plumber A');
       expect(response.quickReplies).toEqual(['Help', 'Menu']);
-
-      expect(mockCreate).toHaveBeenCalled();
-      const calls = mockCreate.mock.calls;
-      const firstCall = calls[0];
-      expect(firstCall?.[0]?.model).toBe('gpt-5-mini');
-      expect(Array.isArray(firstCall?.[0]?.messages)).toBe(true);
     });
 
-    it('should maintain multi-turn history across consecutive calls', async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          { message: { content: JSON.stringify({ text: 'Hello Owen' }) } },
-        ],
-      });
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { content: JSON.stringify({ text: 'Your name is Owen' }) },
-          },
-        ],
+    it('should clean markdown in plain text responses', async () => {
+      mockSendMessage.mockResolvedValue({
+        text: '### Hello!\n**We are here** to help with [Our Site](https://example.com).',
       });
 
-      await service.sendMessage('user_123', 'My name is Owen');
-      await service.sendMessage('user_123', 'What is my name?');
+      const response = await service.sendMessage('user_123', 'Hello');
 
-      const history = service.getHistory('user_123');
-      expect(history.length).toBe(5); // system + user1 + assistant1 + user2 + assistant2
-      expect(history[1].content).toBe('My name is Owen');
-      expect(history[3].content).toBe('What is my name?');
+      expect(response.text).toContain('Hello!:');
+      expect(response.text).toContain('We are here to help');
+      expect(response.text).toContain('Our Site (https://example.com)');
+      expect(response.text).not.toContain('**');
+      expect(response.text).not.toContain('###');
     });
 
     it('should handle API errors gracefully and return fallback message', async () => {
-      mockCreate.mockRejectedValue(
-        new Error('Azure OpenAI rate limit exceeded'),
-      );
+      mockSendMessage.mockRejectedValue(new Error('API quota exceeded'));
 
       const response = await service.sendMessage('user_123', 'Hello!');
 
@@ -140,7 +111,7 @@ describe('AiService', () => {
     });
 
     it('should handle empty responses gracefully', async () => {
-      mockCreate.mockResolvedValue({ choices: [] });
+      mockSendMessage.mockResolvedValue({});
 
       const response = await service.sendMessage('user_123', 'Hello!');
 
@@ -150,10 +121,9 @@ describe('AiService', () => {
 
   describe('cleanMarkdownForMessenger', () => {
     it('should convert markdown links to readable format', () => {
-      const input =
-        'Visit [Foundry](https://owen-foundry.openai.azure.com/) for info.';
+      const input = 'Visit [Google](https://google.com) for info.';
       expect(cleanMarkdownForMessenger(input)).toBe(
-        'Visit Foundry (https://owen-foundry.openai.azure.com/) for info.',
+        'Visit Google (https://google.com) for info.',
       );
     });
 
@@ -172,20 +142,20 @@ describe('AiService', () => {
     });
 
     it('should convert markdown headers', () => {
-      const input = '### Plumbing Services\nAvailable 24/7.';
+      const input = '### Services Offered\nWe do repair.';
       expect(cleanMarkdownForMessenger(input)).toBe(
-        'Plumbing Services:\nAvailable 24/7.',
+        'Services Offered:\nWe do repair.',
       );
     });
   });
 
-  describe('parseAiResponse', () => {
+  describe('parseGeminiResponse', () => {
     it('should parse markdown list into carousel when 2 or more items are present', () => {
       const markdownList = `
 1. **Pasig Plumber**: 24/7 leak detection & repair
 2. **Metro Manila Master**: Pipe replacement & clearing
 `;
-      const result = parseAiResponse(markdownList);
+      const result = parseGeminiResponse(markdownList);
 
       expect(result.carousel).toBeDefined();
       expect(result.carousel?.length).toBe(2);
@@ -220,36 +190,20 @@ describe('AiService', () => {
     });
   });
 
-  describe('resetChat', () => {
-    it('should clear session history', async () => {
-      mockCreate.mockResolvedValue({
-        choices: [{ message: { content: 'Hi' } }],
-      });
-
-      await service.sendMessage('user_123', 'Hello');
-      expect(service.hasSession('user_123')).toBe(true);
-
-      const reset = service.resetChat('user_123');
-      expect(reset).toBe(true);
-      expect(service.hasSession('user_123')).toBe(false);
-      expect(service.getHistory('user_123')).toEqual([]);
-    });
-  });
-
   describe('without API key', () => {
-    it('should return friendly error message if AZURE_OPENAI_API_KEY is not configured', async () => {
+    it('should return friendly error message if GEMINI_API_KEY is not configured', async () => {
       const unconfiguredConfigService = {
         get: jest.fn().mockReturnValue(undefined),
       };
 
       const module: TestingModule = await Test.createTestingModule({
         providers: [
-          AiService,
+          GeminiService,
           { provide: ConfigService, useValue: unconfiguredConfigService },
         ],
       }).compile();
 
-      const unconfiguredService = module.get<AiService>(AiService);
+      const unconfiguredService = module.get<GeminiService>(GeminiService);
       const response = await unconfiguredService.sendMessage(
         'user_123',
         'Hello',

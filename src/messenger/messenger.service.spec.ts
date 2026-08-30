@@ -7,12 +7,12 @@ import {
   formatQuickReplies,
 } from './messenger.service';
 import { MessagingEvent } from './dto/messenger-webhook.dto';
-import { AiService } from '../ai/ai.service';
+import { GeminiService } from '../gemini/gemini.service';
 
 describe('MessengerService', () => {
   let service: MessengerService;
   let configService: jest.Mocked<Partial<ConfigService>>;
-  let aiService: {
+  let geminiService: {
     sendMessage: jest.Mock;
     resetChat: jest.Mock;
     getHistory: jest.Mock;
@@ -27,9 +27,9 @@ describe('MessengerService', () => {
       }),
     };
 
-    aiService = {
+    geminiService = {
       sendMessage: jest.fn().mockResolvedValue({
-        text: 'Mock AI Response',
+        text: 'Mock Gemini AI Response',
         quickReplies: ['Help', 'Menu'],
       }),
       resetChat: jest.fn().mockReturnValue(true),
@@ -40,7 +40,7 @@ describe('MessengerService', () => {
       providers: [
         MessengerService,
         { provide: ConfigService, useValue: configService },
-        { provide: AiService, useValue: aiService },
+        { provide: GeminiService, useValue: geminiService },
       ],
     }).compile();
 
@@ -48,7 +48,7 @@ describe('MessengerService', () => {
   });
 
   describe('handleWebhookEvent', () => {
-    it('should process text message, query AI, and send response back with quick replies', async () => {
+    it('should process text message, query Gemini AI, and send response back with quick replies', async () => {
       const sendSpy = jest
         .spyOn(service, 'sendTextMessage')
         .mockResolvedValue({ recipient_id: '123', message_id: 'mid.1' });
@@ -62,18 +62,18 @@ describe('MessengerService', () => {
 
       await service.handleWebhookEvent(event);
 
-      expect(aiService.sendMessage).toHaveBeenCalledWith(
+      expect(geminiService.sendMessage).toHaveBeenCalledWith(
         '123',
         'What is the capital of France?',
       );
-      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock AI Response', [
+      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response', [
         'Help',
         'Menu',
       ]);
     });
 
-    it('should dispatch carousel template when AI returns carousel cards', async () => {
-      aiService.sendMessage.mockResolvedValue({
+    it('should dispatch carousel template when Gemini returns carousel cards', async () => {
+      geminiService.sendMessage.mockResolvedValue({
         text: 'Here are available plumbers:',
         carousel: [
           {
@@ -114,7 +114,7 @@ describe('MessengerService', () => {
       );
     });
 
-    it('should process quick reply payload, query AI, and send response back', async () => {
+    it('should process quick reply payload, query Gemini AI, and send response back', async () => {
       const sendSpy = jest
         .spyOn(service, 'sendTextMessage')
         .mockResolvedValue({ recipient_id: '123', message_id: 'mid.1' });
@@ -131,17 +131,17 @@ describe('MessengerService', () => {
 
       await service.handleWebhookEvent(event);
 
-      expect(aiService.sendMessage).toHaveBeenCalledWith(
+      expect(geminiService.sendMessage).toHaveBeenCalledWith(
         '123',
         'Tell me a joke',
       );
-      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock AI Response', [
+      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response', [
         'Help',
         'Menu',
       ]);
     });
 
-    it('should handle custom postback by passing payload to AI', async () => {
+    it('should handle custom postback by passing payload to Gemini', async () => {
       const event: MessagingEvent = {
         sender: { id: '123' },
         recipient: { id: '456' },
@@ -150,7 +150,7 @@ describe('MessengerService', () => {
       };
 
       await service.handleWebhookEvent(event);
-      expect(aiService.sendMessage).toHaveBeenCalledWith(
+      expect(geminiService.sendMessage).toHaveBeenCalledWith(
         '123',
         'Select Service',
       );
@@ -173,7 +173,7 @@ describe('MessengerService', () => {
 
       await service.handleWebhookEvent(event);
 
-      expect(aiService.resetChat).toHaveBeenCalledWith('123');
+      expect(geminiService.resetChat).toHaveBeenCalledWith('123');
       expect(sendSpy).toHaveBeenCalledWith(
         '123',
         expect.stringContaining('Welcome!'),

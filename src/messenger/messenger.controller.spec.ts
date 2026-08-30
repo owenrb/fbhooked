@@ -60,7 +60,7 @@ describe('MessengerController', () => {
   });
 
   describe('handleWebhook (POST /webhook)', () => {
-    it('should process messenger events and return EVENT_RECEIVED for valid object: "page"', async () => {
+    it('should process messenger events and return EVENT_RECEIVED for valid object: "page"', () => {
       const payload: MessengerWebhookDto = {
         object: 'page',
         entry: [
@@ -79,7 +79,7 @@ describe('MessengerController', () => {
         ],
       };
 
-      const result = await controller.handleWebhook(payload);
+      const result = controller.handleWebhook(payload);
       expect(result).toBe('EVENT_RECEIVED');
       expect(messengerService.handleWebhookEvent).toHaveBeenCalledTimes(1);
       expect(messengerService.handleWebhookEvent).toHaveBeenCalledWith(
@@ -87,13 +87,13 @@ describe('MessengerController', () => {
       );
     });
 
-    it('should reject non-Messenger payloads (object !== "page")', async () => {
+    it('should reject non-Messenger payloads (object !== "page")', () => {
       const payload = {
         object: 'instagram',
         entry: [],
       } as unknown as MessengerWebhookDto;
 
-      await expect(controller.handleWebhook(payload)).rejects.toThrow(
+      expect(() => controller.handleWebhook(payload)).toThrow(
         BadRequestException,
       );
     });

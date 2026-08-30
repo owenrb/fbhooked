@@ -63,7 +63,7 @@ export class MessengerController {
   @Post()
   @UseGuards(MetaSignatureGuard)
   @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() body: MessengerWebhookDto): Promise<string> {
+  handleWebhook(@Body() body: MessengerWebhookDto): string {
     // Exclusive check for Meta Messenger Webhook payloads (object must equal 'page')
     if (!body || body.object !== 'page') {
       this.logger.error(
@@ -78,7 +78,16 @@ export class MessengerController {
       for (const entry of body.entry) {
         if (Array.isArray(entry.messaging)) {
           for (const messagingEvent of entry.messaging) {
-            await this.messengerService.handleWebhookEvent(messagingEvent);
+            // Process event asynchronously in the background so Meta receives immediate HTTP 200 OK
+            void this.messengerService
+              .handleWebhookEvent(messagingEvent)
+              .catch((err: unknown) => {
+                const errorMsg =
+                  err instanceof Error ? err.message : String(err);
+                this.logger.error(
+                  `Error processing webhook event in background: ${errorMsg}`,
+                );
+              });
           }
         }
       }

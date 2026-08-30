@@ -30,7 +30,6 @@ describe('Meta Messenger Webhook (e2e)', () => {
     await app.init();
   });
 
-
   describe('GET /webhook', () => {
     it('should verify token and return challenge', () => {
       return request(app.getHttpServer())

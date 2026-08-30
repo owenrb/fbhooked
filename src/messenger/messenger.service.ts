@@ -108,6 +108,8 @@ export function formatQuickReplies(
 @Injectable()
 export class MessengerService implements OnModuleInit {
   private readonly logger = new Logger(MessengerService.name);
+  private readonly processedMids = new Map<string, number>();
+  private readonly midTtlMs = 10 * 60 * 1000; // 10 minutes deduplication window
 
   constructor(
     private readonly configService: ConfigService,
@@ -176,6 +178,15 @@ export class MessengerService implements OnModuleInit {
       return;
     }
 
+    if (message.mid) {
+      this.cleanExpiredMids();
+      if (this.processedMids.has(message.mid)) {
+        this.logger.log(`Skipping duplicate message for mid: ${message.mid}`);
+        return;
+      }
+      this.processedMids.set(message.mid, Date.now());
+    }
+
     const userInput = message.quick_reply?.payload || message.text;
 
     if (userInput && senderId) {
@@ -191,6 +202,18 @@ export class MessengerService implements OnModuleInit {
       this.logger.log(
         `Received ${message.attachments.length} attachment(s) from ${senderId}`,
       );
+    }
+  }
+
+  /**
+   * Clean expired message IDs from deduplication cache
+   */
+  private cleanExpiredMids(): void {
+    const now = Date.now();
+    for (const [mid, timestamp] of this.processedMids.entries()) {
+      if (now - timestamp > this.midTtlMs) {
+        this.processedMids.delete(mid);
+      }
     }
   }
 

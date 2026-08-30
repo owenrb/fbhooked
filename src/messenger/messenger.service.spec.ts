@@ -72,6 +72,25 @@ describe('MessengerService', () => {
       ]);
     });
 
+    it('should deduplicate repeated incoming messages with the same mid', async () => {
+      const sendSpy = jest
+        .spyOn(service, 'sendTextMessage')
+        .mockResolvedValue({ recipient_id: '123', message_id: 'mid.out' });
+
+      const event: MessagingEvent = {
+        sender: { id: '123' },
+        recipient: { id: '456' },
+        timestamp: 10000,
+        message: { mid: 'mid.duplicate_test', text: 'Hello repeated' },
+      };
+
+      await service.handleWebhookEvent(event);
+      await service.handleWebhookEvent(event);
+
+      expect(geminiService.sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('should dispatch carousel template when Gemini returns carousel cards', async () => {
       geminiService.sendMessage.mockResolvedValue({
         text: 'Here are available plumbers:',

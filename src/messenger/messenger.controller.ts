@@ -92,8 +92,7 @@ export class MessengerController {
    */
   @Post('get-started')
   @HttpCode(HttpStatus.OK)
-  async setupGetStartedButton(): Promise<any> {
+  async setupGetStartedButton(): Promise<Record<string, unknown>> {
     return this.messengerService.setGetStartedButton();
   }
 }
-

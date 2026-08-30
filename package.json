@@ -1,6 +1,6 @@
 {
   "name": "fbhooked",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "",
   "author": "",
   "private": true,
@@ -23,6 +23,7 @@
     "tunnel:login": "devtunnel user login"
   },
   "dependencies": {
+    "@google/genai": "^2.19.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",

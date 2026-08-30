@@ -5,6 +5,7 @@ import {
   MessageContent,
   PostbackContent,
 } from './dto/messenger-webhook.dto';
+import { GeminiService } from '../gemini/gemini.service';
 
 export const START_CONVERSATION_PAYLOAD = 'START_CONVERSATION';
 
@@ -19,7 +20,10 @@ interface MessengerSendApiResponse {
 export class MessengerService implements OnModuleInit {
   private readonly logger = new Logger(MessengerService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly geminiService: GeminiService,
+  ) {}
 
   /**
    * Auto-configure Messenger Profile (e.g. Get Started button) on module startup
@@ -51,7 +55,7 @@ export class MessengerService implements OnModuleInit {
     );
 
     if (event.message) {
-      this.handleMessage(senderId, event.message);
+      await this.handleMessage(senderId, event.message);
     } else if (event.postback) {
       await this.handlePostback(senderId, event.postback);
     } else if (event.read) {
@@ -74,10 +78,10 @@ export class MessengerService implements OnModuleInit {
   /**
    * Handle incoming message object
    */
-  private handleMessage(
+  private async handleMessage(
     senderId: string | undefined,
     message: MessageContent,
-  ): void {
+  ): Promise<void> {
     if (message.is_echo) {
       this.logger.log(`Skipping echo message for mid: ${message.mid}`);
       return;
@@ -87,6 +91,13 @@ export class MessengerService implements OnModuleInit {
       this.logger.log(
         `Quick reply received from ${senderId}: ${message.quick_reply.payload}`,
       );
+      if (senderId && message.quick_reply.payload) {
+        const reply = await this.geminiService.sendMessage(
+          senderId,
+          message.quick_reply.payload,
+        );
+        await this.sendTextMessage(senderId, reply);
+      }
       return;
     }
 
@@ -94,6 +105,13 @@ export class MessengerService implements OnModuleInit {
       this.logger.log(
         `Text message received from ${senderId}: "${message.text}"`,
       );
+      if (senderId) {
+        const reply = await this.geminiService.sendMessage(
+          senderId,
+          message.text,
+        );
+        await this.sendTextMessage(senderId, reply);
+      }
     }
 
     if (message.attachments) {
@@ -119,6 +137,7 @@ export class MessengerService implements OnModuleInit {
         `User ${senderId} started first chat session via Get Started button ("${postback.payload}").`,
       );
       if (senderId) {
+        this.geminiService.resetChat(senderId);
         await this.sendTextMessage(
           senderId,
           'Welcome! Thank you for starting a conversation with us. How can we help you today?',
@@ -242,4 +261,3 @@ export class MessengerService implements OnModuleInit {
     }
   }
 }
-

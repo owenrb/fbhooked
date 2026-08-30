@@ -9,6 +9,7 @@ It handles Meta Webhook verification (`GET /webhook`), payload authenticity sign
 ## ⚡ Features
 
 - **Exclusive Meta Messenger Scope**: Strictly filters and accepts Meta Messenger payloads (`object: 'page'`), rejecting irrelevant or unauthorized webhook traffic.
+- **Google Gemini Multi-Turn AI Conversation**: Built-in stateful multi-turn conversational AI powered by Google's `@google/genai` SDK (`gemini-3.6-flash`). Remembers chat history per user and automatically generates contextual replies.
 - **Webhook Verification Endpoint**: Implements standard Meta Webhook handshake (`GET /webhook`) with `hub.mode`, `hub.verify_token`, and `hub.challenge`.
 - **HMAC Signature Validation**: `MetaSignatureGuard` validates `x-hub-signature-256` SHA-256 HMAC headers against `MESSENGER_APP_SECRET`.
 - **Send API Integration**: Built-in support (`MessengerService`) for sending text messages, quick replies, templates, and attachments via Graph API (`https://graph.facebook.com/v21.0/me/messages`).
@@ -34,6 +35,11 @@ Set the following variables in `.env`:
 | `MESSENGER_VERIFY_TOKEN` | Secret string configured in your Meta App Dashboard for verification | `your_verify_token_here` |
 | `MESSENGER_APP_SECRET` | App Secret from Meta Developer Dashboard (for `x-hub-signature-256` validation) | `your_app_secret_here` |
 | `MESSENGER_PAGE_ACCESS_TOKEN` | Page Access Token for replying via Messenger Send API | `your_page_access_token_here` |
+| `GEMINI_API_KEY` | Google Gemini API Key for multi-turn AI chat | *(Required for AI)* |
+| `GEMINI_MODEL` | Gemini model name | `gemini-3.6-flash` |
+| `GEMINI_SYSTEM_INSTRUCTION` | Custom system prompt / persona for Gemini | *(Optional)* |
+| `GEMINI_SESSION_TTL_MS` | Session inactivity expiration time in milliseconds | `1800000` (30 min) |
+
 
 ---
 
@@ -164,12 +170,25 @@ source .env && curl -X POST -H "Content-Type: application/json" -d '{
 }' "https://graph.facebook.com/v21.0/me/messenger_profile?access_token=$MESSENGER_PAGE_ACCESS_TOKEN"
 ```
 
-- **First Chat Session Handling**: When a user clicks **"Get Started"**, Meta sends a webhook postback with `payload: "START_CONVERSATION"`. The server processes this event in `MessengerService` and automatically sends a welcome message to the user.
+- **First Chat Session Handling**: When a user clicks **"Get Started"**, Meta sends a webhook postback with `payload: "START_CONVERSATION"`. The server processes this event in `MessengerService`, automatically resets any prior Gemini AI chat history for that user, and sends a welcome message.
 
 ---
 
+## 🤖 Google Gemini AI Multi-Turn Conversation
+
+`fbhooked` integrates Google's official `@google/genai` SDK for multi-turn conversational AI directly into the Meta Messenger webhook pipeline.
+
+### How it works:
+1. **Per-User Chat Session Management**: Each Messenger user (`senderId`) receives an isolated, stateful Gemini chat session (`GeminiService`).
+2. **Contextual Memory**: When a user asks follow-up questions (e.g. "My flight is in May" followed by "What should I pack?"), Gemini retains the multi-turn context from earlier turns.
+3. **Session Expiry & Cleanup**: Sessions expire after `GEMINI_SESSION_TTL_MS` (default 30 minutes of inactivity) to keep memory lightweight.
+4. **Session Reset on "Get Started"**: When a user restarts via the Messenger "Get Started" button or postback, the conversation state is automatically cleared.
+5. **Custom System Instruction**: You can configure a persona or system prompt via `GEMINI_SYSTEM_INSTRUCTION` to tailor responses to your brand.
+
+---
 
 ## 🔒 Security Signature Verification (`x-hub-signature-256`)
+
 
 Meta signs every webhook request body with `x-hub-signature-256`. When `MESSENGER_APP_SECRET` is set in your environment, `MetaSignatureGuard` automatically validates the payload signature using timing-safe SHA-256 HMAC verification.
 

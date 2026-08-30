@@ -5,10 +5,16 @@ import {
   START_CONVERSATION_PAYLOAD,
 } from './messenger.service';
 import { MessagingEvent } from './dto/messenger-webhook.dto';
+import { GeminiService } from '../gemini/gemini.service';
 
 describe('MessengerService', () => {
   let service: MessengerService;
   let configService: jest.Mocked<Partial<ConfigService>>;
+  let geminiService: {
+    sendMessage: jest.Mock;
+    resetChat: jest.Mock;
+    getHistory: jest.Mock;
+  };
 
   beforeEach(async () => {
     configService = {
@@ -19,10 +25,17 @@ describe('MessengerService', () => {
       }),
     };
 
+    geminiService = {
+      sendMessage: jest.fn().mockResolvedValue('Mock Gemini AI Response'),
+      resetChat: jest.fn().mockReturnValue(true),
+      getHistory: jest.fn().mockReturnValue([]),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessengerService,
         { provide: ConfigService, useValue: configService },
+        { provide: GeminiService, useValue: geminiService },
       ],
     }).compile();
 
@@ -30,15 +43,49 @@ describe('MessengerService', () => {
   });
 
   describe('handleWebhookEvent', () => {
-    it('should handle text message without throwing errors', async () => {
+    it('should process text message, query Gemini AI, and send response back', async () => {
+      const sendSpy = jest
+        .spyOn(service, 'sendTextMessage')
+        .mockResolvedValue({ recipient_id: '123', message_id: 'mid.1' });
+
       const event: MessagingEvent = {
         sender: { id: '123' },
         recipient: { id: '456' },
         timestamp: 10000,
-        message: { mid: 'mid.1', text: 'Testing message' },
+        message: { mid: 'mid.1', text: 'What is the capital of France?' },
       };
 
-      await expect(service.handleWebhookEvent(event)).resolves.not.toThrow();
+      await service.handleWebhookEvent(event);
+
+      expect(geminiService.sendMessage).toHaveBeenCalledWith(
+        '123',
+        'What is the capital of France?',
+      );
+      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response');
+    });
+
+    it('should process quick reply payload, query Gemini AI, and send response back', async () => {
+      const sendSpy = jest
+        .spyOn(service, 'sendTextMessage')
+        .mockResolvedValue({ recipient_id: '123', message_id: 'mid.1' });
+
+      const event: MessagingEvent = {
+        sender: { id: '123' },
+        recipient: { id: '456' },
+        timestamp: 10000,
+        message: {
+          mid: 'mid.1',
+          quick_reply: { payload: 'Tell me a joke' },
+        },
+      };
+
+      await service.handleWebhookEvent(event);
+
+      expect(geminiService.sendMessage).toHaveBeenCalledWith(
+        '123',
+        'Tell me a joke',
+      );
+      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response');
     });
 
     it('should handle postback event without throwing errors', async () => {
@@ -46,13 +93,13 @@ describe('MessengerService', () => {
         sender: { id: '123' },
         recipient: { id: '456' },
         timestamp: 10000,
-        postback: { title: 'Get Started', payload: 'START_PAYLOAD' },
+        postback: { title: 'Other Action', payload: 'OTHER_PAYLOAD' },
       };
 
       await expect(service.handleWebhookEvent(event)).resolves.not.toThrow();
     });
 
-    it('should handle START_CONVERSATION postback and send welcome message', async () => {
+    it('should handle START_CONVERSATION postback, reset chat session, and send welcome message', async () => {
       const event: MessagingEvent = {
         sender: { id: '123' },
         recipient: { id: '456' },
@@ -69,6 +116,7 @@ describe('MessengerService', () => {
 
       await service.handleWebhookEvent(event);
 
+      expect(geminiService.resetChat).toHaveBeenCalledWith('123');
       expect(sendSpy).toHaveBeenCalledWith(
         '123',
         expect.stringContaining('Welcome!'),
@@ -137,4 +185,3 @@ describe('MessengerService', () => {
     });
   });
 });
-

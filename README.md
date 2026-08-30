@@ -9,7 +9,9 @@ It handles Meta Webhook verification (`GET /webhook`), payload authenticity sign
 ## ⚡ Features
 
 - **Exclusive Meta Messenger Scope**: Strictly filters and accepts Meta Messenger payloads (`object: 'page'`), rejecting irrelevant or unauthorized webhook traffic.
-- **Google Gemini Multi-Turn AI Conversation**: Built-in stateful multi-turn conversational AI powered by Google's `@google/genai` SDK (`gemini-3.6-flash`). Remembers chat history per user and automatically generates contextual replies.
+- **Azure OpenAI (gpt-5-mini) Multi-Turn AI Conversation**: Built-in stateful multi-turn conversational AI powered by Azure OpenAI (`gpt-5-mini`) hosted on Microsoft Foundry. Remembers chat history per user and automatically generates contextual replies.
+- **Adaptive Cards & Scrollable Carousels**: Automatically transforms list responses into Meta's native Generic Template carousels with interactive action buttons.
+- **Markdown Sanitization**: Clean plain-text formatting for Messenger without broken markdown artifacts.
 - **Webhook Verification Endpoint**: Implements standard Meta Webhook handshake (`GET /webhook`) with `hub.mode`, `hub.verify_token`, and `hub.challenge`.
 - **HMAC Signature Validation**: `MetaSignatureGuard` validates `x-hub-signature-256` SHA-256 HMAC headers against `MESSENGER_APP_SECRET`.
 - **Send API Integration**: Built-in support (`MessengerService`) for sending text messages, quick replies, templates, and attachments via Graph API (`https://graph.facebook.com/v21.0/me/messages`).
@@ -35,10 +37,13 @@ Set the following variables in `.env`:
 | `MESSENGER_VERIFY_TOKEN` | Secret string configured in your Meta App Dashboard for verification | `your_verify_token_here` |
 | `MESSENGER_APP_SECRET` | App Secret from Meta Developer Dashboard (for `x-hub-signature-256` validation) | `your_app_secret_here` |
 | `MESSENGER_PAGE_ACCESS_TOKEN` | Page Access Token for replying via Messenger Send API | `your_page_access_token_here` |
-| `GEMINI_API_KEY` | Google Gemini API Key for multi-turn AI chat | *(Required for AI)* |
-| `GEMINI_MODEL` | Gemini model name | `gemini-3.6-flash` |
-| `GEMINI_SYSTEM_INSTRUCTION` | Custom system prompt / persona for Gemini | *(Optional)* |
-| `GEMINI_SESSION_TTL_MS` | Session inactivity expiration time in milliseconds | `1800000` (30 min) |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI Resource Endpoint | `https://owen-foundry.openai.azure.com/` |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API Key | *(Required for AI)* |
+| `AZURE_OPENAI_DEPLOYMENT` | Deployment Name / Model Name | `gpt-5-mini` |
+| `AZURE_OPENAI_API_VERSION` | Azure OpenAI API Version | `2024-10-21` |
+| `AZURE_OPENAI_SYSTEM_INSTRUCTION` | Custom system prompt / persona for the AI assistant | *(Optional)* |
+| `AZURE_OPENAI_SESSION_TTL_MS` | Session inactivity expiration time in milliseconds | `1800000` (30 min) |
+
 
 
 ---
@@ -170,22 +175,23 @@ source .env && curl -X POST -H "Content-Type: application/json" -d '{
 }' "https://graph.facebook.com/v21.0/me/messenger_profile?access_token=$MESSENGER_PAGE_ACCESS_TOKEN"
 ```
 
-- **First Chat Session Handling**: When a user clicks **"Get Started"**, Meta sends a webhook postback with `payload: "START_CONVERSATION"`. The server processes this event in `MessengerService`, automatically resets any prior Gemini AI chat history for that user, and sends a welcome message.
+- **First Chat Session Handling**: When a user clicks **"Get Started"**, Meta sends a webhook postback with `payload: "START_CONVERSATION"`. The server processes this event in `MessengerService`, automatically resets any prior AI chat history for that user, and sends a welcome message.
 
 ---
 
-## 🤖 Google Gemini AI Multi-Turn Conversation & Adaptive Cards
+## 🤖 Azure OpenAI (`gpt-5-mini`) Multi-Turn Conversation & Adaptive Cards
 
-`fbhooked` integrates Google's official `@google/genai` SDK for multi-turn conversational AI directly into the Meta Messenger webhook pipeline, with rich UI support.
+`fbhooked` integrates the official `openai` SDK with **Azure OpenAI** (`gpt-5-mini`) hosted on Microsoft Foundry directly into the Meta Messenger webhook pipeline.
 
 ### Key Capabilities:
-1. **Adaptive Card Scrollable Carousels**: When Gemini returns a list (recommendations, services, products, options, places), `fbhooked` formats the output into Meta's native **Generic Template Carousel** (`template_type: "generic"`), allowing users to horizontally swipe through rich cards with titles, descriptions, images, and action buttons (`Call`, `Inquire`, `Visit Website`).
+1. **Adaptive Card Scrollable Carousels**: When AI returns a list (recommendations, services, products, options, places), `fbhooked` formats the output into Meta's native **Generic Template Carousel** (`template_type: "generic"`), allowing users to horizontally swipe through rich cards with titles, descriptions, images, and action buttons (`Call`, `Inquire`, `Visit Website`).
 2. **Markdown Sanitization**: Facebook Messenger does not support markdown headers (`###`), bold asterisks (`**`), or bracket link syntax (`[text](url)`). `fbhooked` automatically cleans and reformats markdown into human-readable plain text.
 3. **Interactive Quick Replies**: Responses include interactive quick reply buttons for fast one-tap navigation.
 4. **Smart Auto-Chunking**: Long messages exceeding Meta's 2,000 character limit are automatically split at paragraph or sentence boundaries and dispatched sequentially.
-5. **Per-User Contextual Memory**: Each Messenger user (`senderId`) receives an isolated, stateful Gemini chat session with automatic TTL cleanup (`GEMINI_SESSION_TTL_MS`).
+5. **Per-User Contextual Memory**: Each Messenger user (`senderId`) receives an isolated, stateful chat session with automatic TTL cleanup (`AZURE_OPENAI_SESSION_TTL_MS`).
 6. **Session Reset on "Get Started"**: When a user restarts via the Messenger "Get Started" button or postback, the conversation state is automatically cleared.
-7. **Custom System Instruction**: Configure custom persona and instructions via `GEMINI_SYSTEM_INSTRUCTION`.
+7. **Custom System Instruction**: Configure custom persona and instructions via `AZURE_OPENAI_SYSTEM_INSTRUCTION`.
+
 
 
 ---

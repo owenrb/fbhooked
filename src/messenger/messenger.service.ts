@@ -6,10 +6,10 @@ import {
   PostbackContent,
 } from './dto/messenger-webhook.dto';
 import {
-  GeminiService,
+  AiService,
   GenericTemplateElement,
-  GeminiBotResponse,
-} from '../gemini/gemini.service';
+  AiBotResponse,
+} from '../ai/ai.service';
 
 export const START_CONVERSATION_PAYLOAD = 'START_CONVERSATION';
 
@@ -111,7 +111,7 @@ export class MessengerService implements OnModuleInit {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly geminiService: GeminiService,
+    private readonly aiService: AiService,
   ) {}
 
   /**
@@ -180,10 +180,7 @@ export class MessengerService implements OnModuleInit {
 
     if (userInput && senderId) {
       this.logger.log(`Processing message from ${senderId}: "${userInput}"`);
-      const botResponse = await this.geminiService.sendMessage(
-        senderId,
-        userInput,
-      );
+      const botResponse = await this.aiService.sendMessage(senderId, userInput);
       await this.dispatchBotResponse(senderId, botResponse);
     }
 
@@ -195,11 +192,11 @@ export class MessengerService implements OnModuleInit {
   }
 
   /**
-   * Dispatch structured Gemini bot response (text, carousel, quick replies) to Messenger user
+   * Dispatch structured AI bot response (text, carousel, quick replies) to Messenger user
    */
   async dispatchBotResponse(
     recipientId: string,
-    botResponse: GeminiBotResponse,
+    botResponse: AiBotResponse,
   ): Promise<void> {
     const hasCarousel =
       Array.isArray(botResponse.carousel) && botResponse.carousel.length > 0;
@@ -238,7 +235,7 @@ export class MessengerService implements OnModuleInit {
         `User ${senderId} started first chat session via Get Started button ("${postback.payload}").`,
       );
       if (senderId) {
-        this.geminiService.resetChat(senderId);
+        this.aiService.resetChat(senderId);
         await this.sendTextMessage(
           senderId,
           'Welcome! How can we help you today?',
@@ -248,13 +245,10 @@ export class MessengerService implements OnModuleInit {
       return;
     }
 
-    // Pass custom button postbacks to Gemini as user prompt
+    // Pass custom button postbacks to AI as user prompt
     if (senderId && (postback.title || postback.payload)) {
       const prompt = postback.title || postback.payload;
-      const botResponse = await this.geminiService.sendMessage(
-        senderId,
-        prompt,
-      );
+      const botResponse = await this.aiService.sendMessage(senderId, prompt);
       await this.dispatchBotResponse(senderId, botResponse);
     }
   }

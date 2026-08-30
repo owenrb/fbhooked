@@ -1,9 +1,8 @@
 {
   "name": "fbhooked",
-  "version": "0.0.4",
-  "description": "",
-  "author": "",
-  "private": true,
+  "version": "0.0.5",
+  "description": "A Facebook Messenger bot that uses Gemini AI",
+  "author": "Owen Bringino",
   "license": "MIT",
   "scripts": {
     "build": "nest build",

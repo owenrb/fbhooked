@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   MessengerService,
   START_CONVERSATION_PAYLOAD,
+  splitMessage,
 } from './messenger.service';
 import { MessagingEvent } from './dto/messenger-webhook.dto';
 import { GeminiService } from '../gemini/gemini.service';
@@ -182,6 +183,52 @@ describe('MessengerService', () => {
         success: false,
         reason: 'MESSENGER_PAGE_ACCESS_TOKEN missing',
       });
+    });
+
+    it('should split long messages exceeding 2000 characters and send each chunk', async () => {
+      const responseData = {
+        recipient_id: '123',
+        message_id: 'mid.mock123',
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue(responseData),
+      });
+
+      const longMessage = 'A'.repeat(1500) + '\n\n' + 'B'.repeat(1500);
+      const result = await service.sendTextMessage('123', longMessage);
+
+      expect(result).toEqual(responseData);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('splitMessage', () => {
+    it('should not split text shorter than or equal to maxLength', () => {
+      const text = 'Short message';
+      expect(splitMessage(text, 2000)).toEqual([text]);
+    });
+
+    it('should split at paragraph breaks when text exceeds maxLength', () => {
+      const part1 = 'Paragraph 1 '.repeat(50);
+      const part2 = 'Paragraph 2 '.repeat(50);
+      const fullText = `${part1}\n\n${part2}`;
+      const chunks = splitMessage(fullText, 400);
+
+      expect(chunks.length).toBeGreaterThan(1);
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeLessThanOrEqual(400);
+      }
+    });
+
+    it('should handle hard splits when no whitespace exists', () => {
+      const longWord = 'X'.repeat(500);
+      const chunks = splitMessage(longWord, 200);
+
+      expect(chunks.length).toBe(3);
+      expect(chunks[0].length).toBe(200);
+      expect(chunks[1].length).toBe(200);
+      expect(chunks[2].length).toBe(100);
     });
   });
 });

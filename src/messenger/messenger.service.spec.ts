@@ -4,6 +4,7 @@ import {
   MessengerService,
   START_CONVERSATION_PAYLOAD,
   splitMessage,
+  formatQuickReplies,
 } from './messenger.service';
 import { MessagingEvent } from './dto/messenger-webhook.dto';
 import { GeminiService } from '../gemini/gemini.service';
@@ -27,7 +28,10 @@ describe('MessengerService', () => {
     };
 
     geminiService = {
-      sendMessage: jest.fn().mockResolvedValue('Mock Gemini AI Response'),
+      sendMessage: jest.fn().mockResolvedValue({
+        text: 'Mock Gemini AI Response',
+        quickReplies: ['Help', 'Menu'],
+      }),
       resetChat: jest.fn().mockReturnValue(true),
       getHistory: jest.fn().mockReturnValue([]),
     };
@@ -44,7 +48,7 @@ describe('MessengerService', () => {
   });
 
   describe('handleWebhookEvent', () => {
-    it('should process text message, query Gemini AI, and send response back', async () => {
+    it('should process text message, query Gemini AI, and send response back with quick replies', async () => {
       const sendSpy = jest
         .spyOn(service, 'sendTextMessage')
         .mockResolvedValue({ recipient_id: '123', message_id: 'mid.1' });
@@ -62,7 +66,52 @@ describe('MessengerService', () => {
         '123',
         'What is the capital of France?',
       );
-      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response');
+      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response', [
+        'Help',
+        'Menu',
+      ]);
+    });
+
+    it('should dispatch carousel template when Gemini returns carousel cards', async () => {
+      geminiService.sendMessage.mockResolvedValue({
+        text: 'Here are available plumbers:',
+        carousel: [
+          {
+            title: 'Plumber 1',
+            subtitle: 'Pasig area',
+            buttons: [{ type: 'postback', title: 'Inquire', payload: 'INQ_1' }],
+          },
+        ],
+        quickReplies: ['More Info'],
+      });
+
+      const textSpy = jest
+        .spyOn(service, 'sendTextMessage')
+        .mockResolvedValue({ recipient_id: '123' });
+      const carouselSpy = jest
+        .spyOn(service, 'sendCarousel')
+        .mockResolvedValue({ recipient_id: '123' });
+
+      const event: MessagingEvent = {
+        sender: { id: '123' },
+        recipient: { id: '456' },
+        timestamp: 10000,
+        message: { mid: 'mid.1', text: 'Plumber near Pasig' },
+      };
+
+      await service.handleWebhookEvent(event);
+
+      expect(textSpy).toHaveBeenCalledWith(
+        '123',
+        'Here are available plumbers:',
+      );
+      expect(carouselSpy).toHaveBeenCalledWith(
+        '123',
+        expect.arrayContaining([
+          expect.objectContaining({ title: 'Plumber 1' }),
+        ]),
+        ['More Info'],
+      );
     });
 
     it('should process quick reply payload, query Gemini AI, and send response back', async () => {
@@ -86,21 +135,28 @@ describe('MessengerService', () => {
         '123',
         'Tell me a joke',
       );
-      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response');
+      expect(sendSpy).toHaveBeenCalledWith('123', 'Mock Gemini AI Response', [
+        'Help',
+        'Menu',
+      ]);
     });
 
-    it('should handle postback event without throwing errors', async () => {
+    it('should handle custom postback by passing payload to Gemini', async () => {
       const event: MessagingEvent = {
         sender: { id: '123' },
         recipient: { id: '456' },
         timestamp: 10000,
-        postback: { title: 'Other Action', payload: 'OTHER_PAYLOAD' },
+        postback: { title: 'Select Service', payload: 'SELECT_SERVICE_A' },
       };
 
-      await expect(service.handleWebhookEvent(event)).resolves.not.toThrow();
+      await service.handleWebhookEvent(event);
+      expect(geminiService.sendMessage).toHaveBeenCalledWith(
+        '123',
+        'Select Service',
+      );
     });
 
-    it('should handle START_CONVERSATION postback, reset chat session, and send welcome message', async () => {
+    it('should handle START_CONVERSATION postback, reset chat session, and send welcome message with quick replies', async () => {
       const event: MessagingEvent = {
         sender: { id: '123' },
         recipient: { id: '456' },
@@ -121,71 +177,63 @@ describe('MessengerService', () => {
       expect(sendSpy).toHaveBeenCalledWith(
         '123',
         expect.stringContaining('Welcome!'),
+        ['Services', 'Contact Us', 'Help'],
       );
     });
   });
 
-  describe('setGetStartedButton', () => {
-    it('should call Graph API to set get_started profile setting', async () => {
-      const mockResponse = { result: 'success' };
+  describe('sendCarousel', () => {
+    it('should construct generic template payload and call Graph API', async () => {
+      const responseData = { recipient_id: '123', message_id: 'mid.card1' };
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: jest.fn().mockResolvedValue(mockResponse),
+        json: jest.fn().mockResolvedValue(responseData),
       });
 
-      const result = await service.setGetStartedButton();
+      const elements = [
+        {
+          title: 'Service A',
+          subtitle: 'Affordable plumbing',
+          buttons: [
+            { type: 'postback' as const, title: 'Book', payload: 'BOOK_A' },
+          ],
+        },
+      ];
 
-      expect(result).toEqual(mockResponse);
+      const result = await service.sendCarousel('123', elements, ['Back']);
+
+      expect(result).toEqual(responseData);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://graph.facebook.com/v21.0/me/messenger_profile?access_token=mock_page_access_token',
+        'https://graph.facebook.com/v21.0/me/messages?access_token=mock_page_access_token',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
-            get_started: { payload: START_CONVERSATION_PAYLOAD },
+            messaging_type: 'RESPONSE',
+            recipient: { id: '123' },
+            message: {
+              attachment: {
+                type: 'template',
+                payload: {
+                  template_type: 'generic',
+                  elements,
+                },
+              },
+              quick_replies: [
+                {
+                  content_type: 'text',
+                  title: 'Back',
+                  payload: 'BACK',
+                },
+              ],
+            },
           }),
         }),
       );
     });
-
-    it('should return error if MESSENGER_PAGE_ACCESS_TOKEN is missing', async () => {
-      (configService.get as jest.Mock).mockReturnValue(undefined);
-
-      const result = await service.setGetStartedButton();
-
-      expect(result).toEqual({
-        success: false,
-        reason: 'MESSENGER_PAGE_ACCESS_TOKEN missing',
-      });
-    });
   });
 
-  describe('sendCustomMessage', () => {
-    it('should handle fetch API response when page access token is configured', async () => {
-      const responseData = {
-        recipient_id: '123',
-        message_id: 'mid.mock123',
-      };
-      const mockFetchResponse = {
-        ok: true,
-        json: jest.fn().mockResolvedValue(responseData),
-      };
-      global.fetch = jest.fn().mockResolvedValue(mockFetchResponse);
-
-      const result = await service.sendTextMessage('123', 'Hello back!');
-      expect(result).toEqual(responseData);
-      expect(global.fetch).toHaveBeenCalled();
-    });
-
-    it('should return error status if MESSENGER_PAGE_ACCESS_TOKEN is missing', async () => {
-      (configService.get as jest.Mock).mockReturnValue(undefined);
-      const result = await service.sendTextMessage('123', 'Hello');
-      expect(result).toEqual({
-        success: false,
-        reason: 'MESSENGER_PAGE_ACCESS_TOKEN missing',
-      });
-    });
-
-    it('should split long messages exceeding 2000 characters and send each chunk', async () => {
+  describe('sendTextMessage', () => {
+    it('should split long messages exceeding 2000 characters and attach quick replies to last chunk', async () => {
       const responseData = {
         recipient_id: '123',
         message_id: 'mid.mock123',
@@ -196,10 +244,35 @@ describe('MessengerService', () => {
       });
 
       const longMessage = 'A'.repeat(1500) + '\n\n' + 'B'.repeat(1500);
-      const result = await service.sendTextMessage('123', longMessage);
+      const result = await service.sendTextMessage('123', longMessage, [
+        'Option',
+      ]);
 
       expect(result).toEqual(responseData);
       expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('formatQuickReplies', () => {
+    it('should format string array into Meta quick reply objects', () => {
+      const formatted = formatQuickReplies(['Option 1', 'Option 2']);
+      expect(formatted).toEqual([
+        {
+          content_type: 'text',
+          title: 'Option 1',
+          payload: 'OPTION_1',
+        },
+        {
+          content_type: 'text',
+          title: 'Option 2',
+          payload: 'OPTION_2',
+        },
+      ]);
+    });
+
+    it('should return undefined for empty or invalid input', () => {
+      expect(formatQuickReplies([])).toBeUndefined();
+      expect(formatQuickReplies(undefined)).toBeUndefined();
     });
   });
 

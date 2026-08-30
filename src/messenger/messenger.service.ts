@@ -5,7 +5,11 @@ import {
   MessageContent,
   PostbackContent,
 } from './dto/messenger-webhook.dto';
-import { GeminiService } from '../gemini/gemini.service';
+import {
+  GeminiService,
+  GenericTemplateElement,
+  GeminiBotResponse,
+} from '../gemini/gemini.service';
 
 export const START_CONVERSATION_PAYLOAD = 'START_CONVERSATION';
 
@@ -14,6 +18,12 @@ export interface MessengerSendApiResponse {
   message_id?: string;
   error?: any;
   [key: string]: any;
+}
+
+export interface QuickReplyOption {
+  content_type: 'text';
+  title: string;
+  payload: string;
 }
 
 /**
@@ -73,6 +83,26 @@ export function splitMessage(text: string, maxLength: number = 2000): string[] {
   }
 
   return chunks;
+}
+
+/**
+ * Format string array into Meta Quick Reply objects
+ */
+export function formatQuickReplies(
+  quickReplies?: string[],
+): QuickReplyOption[] | undefined {
+  if (!Array.isArray(quickReplies) || quickReplies.length === 0) {
+    return undefined;
+  }
+
+  return quickReplies.slice(0, 13).map((title) => {
+    const cleanTitle = String(title).slice(0, 20);
+    return {
+      content_type: 'text',
+      title: cleanTitle,
+      payload: cleanTitle.toUpperCase().replace(/\s+/g, '_').slice(0, 1000),
+    };
+  });
 }
 
 @Injectable()
@@ -146,36 +176,48 @@ export class MessengerService implements OnModuleInit {
       return;
     }
 
-    if (message.quick_reply) {
-      this.logger.log(
-        `Quick reply received from ${senderId}: ${message.quick_reply.payload}`,
-      );
-      if (senderId && message.quick_reply.payload) {
-        const reply = await this.geminiService.sendMessage(
-          senderId,
-          message.quick_reply.payload,
-        );
-        await this.sendTextMessage(senderId, reply);
-      }
-      return;
-    }
+    const userInput = message.quick_reply?.payload || message.text;
 
-    if (message.text) {
-      this.logger.log(
-        `Text message received from ${senderId}: "${message.text}"`,
+    if (userInput && senderId) {
+      this.logger.log(`Processing message from ${senderId}: "${userInput}"`);
+      const botResponse = await this.geminiService.sendMessage(
+        senderId,
+        userInput,
       );
-      if (senderId) {
-        const reply = await this.geminiService.sendMessage(
-          senderId,
-          message.text,
-        );
-        await this.sendTextMessage(senderId, reply);
-      }
+      await this.dispatchBotResponse(senderId, botResponse);
     }
 
     if (message.attachments) {
       this.logger.log(
         `Received ${message.attachments.length} attachment(s) from ${senderId}`,
+      );
+    }
+  }
+
+  /**
+   * Dispatch structured Gemini bot response (text, carousel, quick replies) to Messenger user
+   */
+  async dispatchBotResponse(
+    recipientId: string,
+    botResponse: GeminiBotResponse,
+  ): Promise<void> {
+    const hasCarousel =
+      Array.isArray(botResponse.carousel) && botResponse.carousel.length > 0;
+
+    if (hasCarousel && botResponse.carousel) {
+      if (botResponse.text) {
+        await this.sendTextMessage(recipientId, botResponse.text);
+      }
+      await this.sendCarousel(
+        recipientId,
+        botResponse.carousel,
+        botResponse.quickReplies,
+      );
+    } else if (botResponse.text) {
+      await this.sendTextMessage(
+        recipientId,
+        botResponse.text,
+        botResponse.quickReplies,
       );
     }
   }
@@ -199,9 +241,21 @@ export class MessengerService implements OnModuleInit {
         this.geminiService.resetChat(senderId);
         await this.sendTextMessage(
           senderId,
-          'Welcome! Thank you for starting a conversation with us. How can we help you today?',
+          'Welcome! How can we help you today?',
+          ['Services', 'Contact Us', 'Help'],
         );
       }
+      return;
+    }
+
+    // Pass custom button postbacks to Gemini as user prompt
+    if (senderId && (postback.title || postback.payload)) {
+      const prompt = postback.title || postback.payload;
+      const botResponse = await this.geminiService.sendMessage(
+        senderId,
+        prompt,
+      );
+      await this.dispatchBotResponse(senderId, botResponse);
     }
   }
 
@@ -259,24 +313,35 @@ export class MessengerService implements OnModuleInit {
 
   /**
    * Send a text message to a Messenger user via the Meta Graph Send API.
-   * Automatically splits long messages (>2000 chars) into multiple consecutive chunks
-   * to respect Meta Messenger's 2000 character limit.
+   * Automatically splits long messages (>2000 chars) into multiple consecutive chunks.
+   * Optionally attaches Quick Reply pills to the final chunk.
    */
   async sendTextMessage(
     recipientId: string,
     text: string,
+    quickReplies?: string[],
   ): Promise<MessengerSendApiResponse> {
     const chunks = splitMessage(text, 2000);
+    const formattedQuickReplies = formatQuickReplies(quickReplies);
+
     let lastResult: MessengerSendApiResponse = {
       recipient_id: recipientId,
     };
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
       if (chunk.length > 0) {
-        lastResult = await this.sendCustomMessage(recipientId, { text: chunk });
+        const isLastChunk = i === chunks.length - 1;
+        const payload: Record<string, unknown> = { text: chunk };
+
+        if (isLastChunk && formattedQuickReplies) {
+          payload.quick_replies = formattedQuickReplies;
+        }
+
+        lastResult = await this.sendCustomMessage(recipientId, payload);
         if (lastResult?.error) {
           this.logger.error(
-            `Failed sending chunk to ${recipientId}: ${JSON.stringify(lastResult.error)}`,
+            `Failed sending text chunk to ${recipientId}: ${JSON.stringify(lastResult.error)}`,
           );
           break;
         }
@@ -284,6 +349,36 @@ export class MessengerService implements OnModuleInit {
     }
 
     return lastResult;
+  }
+
+  /**
+   * Send a Generic Template (scrollable carousel) to a Messenger user
+   */
+  async sendCarousel(
+    recipientId: string,
+    elements: GenericTemplateElement[],
+    quickReplies?: string[],
+  ): Promise<MessengerSendApiResponse> {
+    if (!elements || elements.length === 0) {
+      return { success: false, reason: 'No elements provided for carousel' };
+    }
+
+    const payload: Record<string, unknown> = {
+      attachment: {
+        type: 'template',
+        payload: {
+          template_type: 'generic',
+          elements: elements.slice(0, 10),
+        },
+      },
+    };
+
+    const formattedQuickReplies = formatQuickReplies(quickReplies);
+    if (formattedQuickReplies) {
+      payload.quick_replies = formattedQuickReplies;
+    }
+
+    return this.sendCustomMessage(recipientId, payload);
   }
 
   /**

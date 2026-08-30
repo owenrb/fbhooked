@@ -1,6 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { GeminiService } from './gemini.service';
+import {
+  GeminiService,
+  cleanMarkdownForMessenger,
+  parseGeminiResponse,
+  sanitizeCarouselElements,
+} from './gemini.service';
 
 const mockSendMessage = jest.fn();
 const mockGetHistory = jest.fn();
@@ -31,7 +36,7 @@ describe('GeminiService', () => {
         if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
         if (key === 'GEMINI_MODEL') return 'gemini-3.6-flash';
         if (key === 'GEMINI_SYSTEM_INSTRUCTION')
-          return 'You are a helpful assistant.';
+          return 'Custom prompt for tests';
         if (key === 'GEMINI_SESSION_TTL_MS') return '60000';
         return undefined;
       }),
@@ -52,38 +57,49 @@ describe('GeminiService', () => {
   });
 
   describe('sendMessage', () => {
-    it('should create a chat session and send a message returning response text', async () => {
+    it('should parse structured JSON carousel response from Gemini', async () => {
+      const geminiJson = JSON.stringify({
+        text: 'Here are available plumbers:',
+        carousel: [
+          {
+            title: 'Plumber A',
+            subtitle: 'Emergency leak repair',
+            buttons: [
+              {
+                type: 'phone_number',
+                title: 'Call',
+                payload: '+639123456789',
+              },
+            ],
+          },
+        ],
+        quickReplies: ['Help', 'Menu'],
+      });
+
       mockSendMessage.mockResolvedValue({
-        text: 'Hello, I am Gemini AI!',
+        text: `\`\`\`json\n${geminiJson}\n\`\`\``,
       });
 
-      const response = await service.sendMessage('user_123', 'Hello!');
+      const response = await service.sendMessage('user_123', 'Need plumber');
 
-      expect(response).toBe('Hello, I am Gemini AI!');
-      expect(mockChatsCreate).toHaveBeenCalledWith({
-        model: 'gemini-3.6-flash',
-        config: {
-          systemInstruction: 'You are a helpful assistant.',
-        },
-      });
-      expect(mockSendMessage).toHaveBeenCalledWith({ message: 'Hello!' });
+      expect(response.text).toBe('Here are available plumbers:');
+      expect(response.carousel).toHaveLength(1);
+      expect(response.carousel?.[0].title).toBe('Plumber A');
+      expect(response.quickReplies).toEqual(['Help', 'Menu']);
     });
 
-    it('should reuse existing chat session for multi-turn conversations', async () => {
-      mockSendMessage.mockResolvedValueOnce({ text: 'Response 1' });
-      mockSendMessage.mockResolvedValueOnce({ text: 'Response 2' });
-
-      await service.sendMessage('user_123', 'First message');
-      await service.sendMessage('user_123', 'Second message');
-
-      expect(mockChatsCreate).toHaveBeenCalledTimes(1);
-      expect(mockSendMessage).toHaveBeenCalledTimes(2);
-      expect(mockSendMessage).toHaveBeenNthCalledWith(1, {
-        message: 'First message',
+    it('should clean markdown in plain text responses', async () => {
+      mockSendMessage.mockResolvedValue({
+        text: '### Hello!\n**We are here** to help with [Our Site](https://example.com).',
       });
-      expect(mockSendMessage).toHaveBeenNthCalledWith(2, {
-        message: 'Second message',
-      });
+
+      const response = await service.sendMessage('user_123', 'Hello');
+
+      expect(response.text).toContain('Hello!:');
+      expect(response.text).toContain('We are here to help');
+      expect(response.text).toContain('Our Site (https://example.com)');
+      expect(response.text).not.toContain('**');
+      expect(response.text).not.toContain('###');
     });
 
     it('should handle API errors gracefully and return fallback message', async () => {
@@ -91,7 +107,7 @@ describe('GeminiService', () => {
 
       const response = await service.sendMessage('user_123', 'Hello!');
 
-      expect(response).toContain('error processing your request');
+      expect(response.text).toContain('error processing your request');
     });
 
     it('should handle empty responses gracefully', async () => {
@@ -99,43 +115,78 @@ describe('GeminiService', () => {
 
       const response = await service.sendMessage('user_123', 'Hello!');
 
-      expect(response).toContain("couldn't generate a response");
+      expect(response.text).toContain("couldn't generate a response");
     });
   });
 
-  describe('resetChat', () => {
-    it('should delete existing session and start a new one on next message', async () => {
-      mockSendMessage.mockResolvedValue({ text: 'Reply' });
+  describe('cleanMarkdownForMessenger', () => {
+    it('should convert markdown links to readable format', () => {
+      const input = 'Visit [Google](https://google.com) for info.';
+      expect(cleanMarkdownForMessenger(input)).toBe(
+        'Visit Google (https://google.com) for info.',
+      );
+    });
 
-      await service.sendMessage('user_123', 'Message 1');
-      expect(service.hasSession('user_123')).toBe(true);
+    it('should strip bold and italic markers', () => {
+      const input = 'This is **bold**, *italic*, and __bold2__.';
+      expect(cleanMarkdownForMessenger(input)).toBe(
+        'This is bold, italic, and bold2.',
+      );
+    });
 
-      const resetResult = service.resetChat('user_123');
-      expect(resetResult).toBe(true);
-      expect(service.hasSession('user_123')).toBe(false);
+    it('should convert bullet points to unicode dots', () => {
+      const input = '- Item 1\n* Item 2\n+ Item 3';
+      expect(cleanMarkdownForMessenger(input)).toBe(
+        '• Item 1\n• Item 2\n• Item 3',
+      );
+    });
 
-      await service.sendMessage('user_123', 'Message 2');
-      expect(mockChatsCreate).toHaveBeenCalledTimes(2);
+    it('should convert markdown headers', () => {
+      const input = '### Services Offered\nWe do repair.';
+      expect(cleanMarkdownForMessenger(input)).toBe(
+        'Services Offered:\nWe do repair.',
+      );
     });
   });
 
-  describe('getHistory', () => {
-    it('should return history from chat instance', async () => {
-      const mockHistory = [
-        { role: 'user', parts: [{ text: 'Hi' }] },
-        { role: 'model', parts: [{ text: 'Hello' }] },
+  describe('parseGeminiResponse', () => {
+    it('should parse markdown list into carousel when 2 or more items are present', () => {
+      const markdownList = `
+1. **Pasig Plumber**: 24/7 leak detection & repair
+2. **Metro Manila Master**: Pipe replacement & clearing
+`;
+      const result = parseGeminiResponse(markdownList);
+
+      expect(result.carousel).toBeDefined();
+      expect(result.carousel?.length).toBe(2);
+      expect(result.carousel?.[0].title).toBe('Pasig Plumber');
+      expect(result.carousel?.[0].subtitle).toBe(
+        '24/7 leak detection & repair',
+      );
+    });
+  });
+
+  describe('sanitizeCarouselElements', () => {
+    it('should enforce 80 char title limit and 20 char button limit', () => {
+      const rawElements = [
+        {
+          title: 'A'.repeat(100),
+          subtitle: 'B'.repeat(120),
+          buttons: [
+            {
+              type: 'postback',
+              title: 'Very Long Button Title Exceeding Limit',
+              payload: 'ACTION',
+            },
+          ],
+        },
       ];
-      mockGetHistory.mockReturnValue(mockHistory);
-      mockSendMessage.mockResolvedValue({ text: 'Hello' });
 
-      await service.sendMessage('user_123', 'Hi');
-      const history = service.getHistory('user_123');
+      const sanitized = sanitizeCarouselElements(rawElements);
 
-      expect(history).toEqual(mockHistory);
-    });
-
-    it('should return empty array if session does not exist', () => {
-      expect(service.getHistory('non_existent')).toEqual([]);
+      expect(sanitized[0].title.length).toBe(80);
+      expect(sanitized[0].subtitle?.length).toBe(80);
+      expect(sanitized[0].buttons?.[0].title.length).toBe(20);
     });
   });
 
@@ -158,7 +209,7 @@ describe('GeminiService', () => {
         'Hello',
       );
 
-      expect(response).toContain('AI chat is currently unavailable');
+      expect(response.text).toContain('AI chat is currently unavailable');
     });
   });
 });

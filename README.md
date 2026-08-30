@@ -174,16 +174,19 @@ source .env && curl -X POST -H "Content-Type: application/json" -d '{
 
 ---
 
-## 🤖 Google Gemini AI Multi-Turn Conversation
+## 🤖 Google Gemini AI Multi-Turn Conversation & Adaptive Cards
 
-`fbhooked` integrates Google's official `@google/genai` SDK for multi-turn conversational AI directly into the Meta Messenger webhook pipeline.
+`fbhooked` integrates Google's official `@google/genai` SDK for multi-turn conversational AI directly into the Meta Messenger webhook pipeline, with rich UI support.
 
-### How it works:
-1. **Per-User Chat Session Management**: Each Messenger user (`senderId`) receives an isolated, stateful Gemini chat session (`GeminiService`).
-2. **Contextual Memory**: When a user asks follow-up questions (e.g. "My flight is in May" followed by "What should I pack?"), Gemini retains the multi-turn context from earlier turns.
-3. **Session Expiry & Cleanup**: Sessions expire after `GEMINI_SESSION_TTL_MS` (default 30 minutes of inactivity) to keep memory lightweight.
-4. **Session Reset on "Get Started"**: When a user restarts via the Messenger "Get Started" button or postback, the conversation state is automatically cleared.
-5. **Custom System Instruction**: You can configure a persona or system prompt via `GEMINI_SYSTEM_INSTRUCTION` to tailor responses to your brand.
+### Key Capabilities:
+1. **Adaptive Card Scrollable Carousels**: When Gemini returns a list (recommendations, services, products, options, places), `fbhooked` formats the output into Meta's native **Generic Template Carousel** (`template_type: "generic"`), allowing users to horizontally swipe through rich cards with titles, descriptions, images, and action buttons (`Call`, `Inquire`, `Visit Website`).
+2. **Markdown Sanitization**: Facebook Messenger does not support markdown headers (`###`), bold asterisks (`**`), or bracket link syntax (`[text](url)`). `fbhooked` automatically cleans and reformats markdown into human-readable plain text.
+3. **Interactive Quick Replies**: Responses include interactive quick reply buttons for fast one-tap navigation.
+4. **Smart Auto-Chunking**: Long messages exceeding Meta's 2,000 character limit are automatically split at paragraph or sentence boundaries and dispatched sequentially.
+5. **Per-User Contextual Memory**: Each Messenger user (`senderId`) receives an isolated, stateful Gemini chat session with automatic TTL cleanup (`GEMINI_SESSION_TTL_MS`).
+6. **Session Reset on "Get Started"**: When a user restarts via the Messenger "Get Started" button or postback, the conversation state is automatically cleared.
+7. **Custom System Instruction**: Configure custom persona and instructions via `GEMINI_SYSTEM_INSTRUCTION`.
+
 
 ---
 
